@@ -1,0 +1,6 @@
+node_modules/
+test-results/
+# Arquivos gerados pelo build (o GitHub Actions gera de novo)
+www/app.js
+www/sw.js
+.DS_Store
