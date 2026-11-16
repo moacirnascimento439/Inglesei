@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#D6402B"/>
+  <g id="mark">
+    <path d="M118 132h276a40 40 0 0 1 40 40v150a40 40 0 0 1-40 40H252l-78 62v-62h-56a40 40 0 0 1-40-40V172a40 40 0 0 1 40-40z" fill="#ffffff"/>
+    <text x="256" y="292" text-anchor="middle" font-family="Bricolage Grotesque, Arial Black, sans-serif" font-weight="800" font-size="150" fill="#141B2D">Hi!</text>
+    <circle cx="398" cy="112" r="34" fill="#FFE58A" stroke="#D6402B" stroke-width="10"/>
+  </g>
+</svg>

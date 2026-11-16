@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#d6402b">
+  <meta name="description" content="Inglesei: aprenda inglês americano com teoria, vídeo-aulas, gírias e conversa com IA.">
+  <title>Inglesei</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="side" aria-label="Menu principal">
+    <a class="brand" href="#inicio">
+      <img class="brand-logo" src="icons/icon-192.png" alt="" width="38" height="38">
+      <span class="brand-name">Inglesei<small>INGLÊS AMERICANO</small></span>
+    </a>
+    <nav class="navlist" id="side-nav"></nav>
+    <div class="side-foot">
+      <div class="mini-stats">
+        <div class="mini-stat"><b id="side-xp">0</b><span>XP total</span></div>
+        <div class="mini-stat"><b id="side-streak">0</b><span>dias seguidos</span></div>
+      </div>
+    </div>
+  </aside>
+  <main class="main" id="main">
+    <div class="wrap">
+      <div class="mobile-top">
+        <a class="brand" href="#inicio"><img class="brand-logo" src="icons/icon-192.png" alt="" width="34" height="34"><span class="brand-name">Inglesei</span></a>
+        <a class="icon-btn" href="#lembretes" aria-label="Lembretes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></a>
+      </div>
+      <section class="view" id="view-inicio" aria-label="Início"></section>
+      <section class="view" id="view-trilha" aria-label="Trilha" hidden></section>
+      <section class="view" id="view-licao" aria-label="Lição" hidden></section>
+      <section class="view" id="view-aula" aria-label="Vídeo-aula" hidden></section>
+      <section class="view" id="view-aulas" aria-label="Vídeo-aulas" hidden></section>
+      <section class="view" id="view-expressoes" aria-label="Gírias e expressões" hidden></section>
+      <section class="view" id="view-conversa" aria-label="Conversa com IA" hidden></section>
+      <section class="view" id="view-treino" aria-label="Treino" hidden></section>
+      <section class="view" id="view-lembretes" aria-label="Lembretes" hidden></section>
+      <section class="view" id="view-ajustes" aria-label="Ajustes" hidden></section>
+      <section class="view" id="view-mais" aria-label="Mais" hidden></section>
+      <section class="view" id="view-motivacao" aria-label="Hora de estudar" hidden></section>
+    </div>
+  </main>
+</div>
+<nav class="tabbar" id="tab-nav" aria-label="Navegação"></nav>
+<div class="speaking-bar" id="speaking-bar" hidden><button type="button" class="btn dark" id="stop-voice">Parar áudio</button></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+<script>
+  // Versão web: funciona offline e pode ser instalada pelo navegador.
+  if ("serviceWorker" in navigator && location.protocol === "https:" && !window.Capacitor?.isNativePlatform?.()) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+</script>
+</body>
+</html>
