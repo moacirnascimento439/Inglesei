@@ -1,0 +1,14 @@
+{
+  "appId": "com.moacir.inglesei",
+  "appName": "Inglesei",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#f4f6fb"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_inglesei",
+      "iconColor": "#D6402B"
+    }
+  }
+}
