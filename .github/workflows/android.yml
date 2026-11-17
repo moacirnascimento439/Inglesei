@@ -3,6 +3,7 @@ name: App Android (APK)
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -35,7 +36,25 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - run: npm ci
+      - name: Lista de frases para as vozes naturais
+        run: node tools/export-texts.mjs
+      - name: Cache das vozes naturais
+        uses: actions/cache@v4
+        with:
+          path: |
+            .voices-cache
+            www/audio
+          key: vozes-${{ hashFiles('tools/voice-texts.json', 'tools/make-voices.py') }}
+          restore-keys: vozes-
+      - name: Gerar vozes naturais (Piper)
+        run: |
+          which ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          pip install piper-tts==1.8.0
+          python tools/make-voices.py
       - run: npm run build
       - run: npx cap sync android
       - name: Montar o APK
