@@ -4,3 +4,8 @@ test-results/
 www/app.js
 www/sw.js
 .DS_Store
+# Vozes geradas no GitHub Actions (tools/make-voices.py)
+www/audio/
+android/app/src/main/res/raw/lembrete_*
+.voices-cache/
+tools/voice-texts.json

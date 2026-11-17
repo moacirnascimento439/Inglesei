@@ -1,4 +1,4 @@
-// ===== Recursos do aparelho: voz, microfone e lembretes =====
+// ===== Recursos do aparelho: voz do celular, microfone, câmera e lembretes =====
 // No app Android usamos plugins nativos do Capacitor; no navegador, as APIs da Web.
 import { Capacitor } from "@capacitor/core";
 import { TextToSpeech } from "@capacitor-community/text-to-speech";
@@ -7,13 +7,8 @@ import { LocalNotifications } from "@capacitor/local-notifications";
 
 export const isNative = Capacitor.isNativePlatform();
 
-// ---------------- Voz (texto para fala) ----------------
-const speakingListeners = new Set();
-let speaking = false;
-let speakToken = 0;
-function setSpeaking(v) { if (speaking !== v) { speaking = v; speakingListeners.forEach((fn) => fn(v)); } }
-export function onSpeakingChange(fn) { speakingListeners.add(fn); return () => speakingListeners.delete(fn); }
-export const canSpeak = () => isNative || (typeof window !== "undefined" && "speechSynthesis" in window);
+// ---------------- Voz do celular (reserva quando não há voz natural) ----------------
+export const canDeviceSpeak = () => isNative || (typeof window !== "undefined" && "speechSynthesis" in window);
 
 function webVoices() {
   return new Promise((resolve) => {
@@ -24,7 +19,7 @@ function webVoices() {
   });
 }
 
-/** Lista as vozes em inglês disponíveis no aparelho: [{ index, name, lang, voiceURI }] */
+/** Vozes em inglês instaladas no aparelho: [{ index, name, lang, voiceURI }] */
 export async function listEnglishVoices() {
   try {
     const all = isNative ? (await TextToSpeech.getSupportedVoices()).voices : await webVoices();
@@ -35,14 +30,10 @@ export async function listEnglishVoices() {
   }
 }
 
-/**
- * Fala um texto e resolve quando termina.
- * voice: { index, voiceURI } escolhida pelo usuário (usada só para inglês).
- */
-export async function speak(text, { lang = "en-US", rate = 1, pitch = 1, voice = null } = {}) {
-  if (!text || !canSpeak()) return;
+/** Fala com a voz do celular e resolve quando termina. voice = { index, voiceURI } (só para inglês). */
+export async function deviceSpeak(text, { lang = "en-US", rate = 1, pitch = 1, voice = null } = {}) {
+  if (!text || !canDeviceSpeak()) return;
   const english = lang.startsWith("en");
-  setSpeaking(true);
   try {
     if (isNative) {
       const opts = { text, lang, rate, pitch, volume: 1, queueStrategy: 0 };
@@ -62,26 +53,10 @@ export async function speak(text, { lang = "en-US", rate = 1, pitch = 1, voice =
     }
   } catch {
     /* voz indisponível: o texto continua na tela */
-  } finally {
-    setSpeaking(false);
   }
 }
-
-/** Fala uma sequência de falas [{ text, lang }]; para se stopSpeaking() for chamado. */
-export async function speakLines(lines, opts = {}, onLine) {
-  const token = ++speakToken;
-  for (let i = 0; i < lines.length; i++) {
-    if (token !== speakToken) return false;
-    onLine?.(i);
-    await speak(lines[i].text, { ...opts, lang: lines[i].lang === "pt" ? "pt-BR" : "en-US" });
-  }
-  return token === speakToken;
-}
-
-export async function stopSpeaking() {
-  speakToken++;
-  try { if (isNative) await TextToSpeech.stop(); else speechSynthesis.cancel(); } catch { /* nada */ }
-  setSpeaking(false);
+export async function deviceStop() {
+  try { if (isNative) await TextToSpeech.stop(); else if (canDeviceSpeak()) speechSynthesis.cancel(); } catch { /* nada */ }
 }
 
 // ---------------- Microfone (fala para texto) ----------------
@@ -133,11 +108,18 @@ export async function listen({ lang = "en-US", onPartial, onEnd }) {
   return { stop: () => { try { rec.stop(); } catch { /* nada */ } } };
 }
 
+// ---------------- Câmera (sua imagem na chamada de vídeo) ----------------
+export async function openCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return null;
+  try { return await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: 480, height: 640 }, audio: false }); }
+  catch { return null; }
+}
+
 // ---------------- Lembretes (notificações agendadas) ----------------
 export const remindersSupported = isNative;
-const CHANNEL = "lembretes";
 const ID_BASE = 1000;
 const DAYS_AHEAD = 21;
+const channelFor = (voiceId, n) => (voiceId ? `lembrete_${voiceId}_${n}` : "lembretes");
 
 export async function notificationStatus() {
   if (!isNative) return { display: "unsupported", exact: "unsupported" };
@@ -154,54 +136,67 @@ export async function openExactAlarmSettings() {
   if (isNative) { try { await LocalNotifications.changeExactNotificationSetting(); } catch { /* nada */ } }
 }
 
+/** Cria os canais de notificação. Cada canal tem como som uma frase falada em inglês (res/raw). */
+async function ensureChannels(voiceId, count) {
+  const make = (id, name, sound) => LocalNotifications.createChannel({ id, name, description: "Hora de praticar inglês", importance: 4, vibration: true, visibility: 1, ...(sound ? { sound } : {}) }).catch(() => {});
+  await make("lembretes", "Lembretes de estudo");
+  if (voiceId) for (let n = 0; n < count; n++) await make(channelFor(voiceId, n), `Lembrete falado (${voiceId}) ${n + 1}`, `lembrete_${voiceId}_${n}.ogg`);
+}
+
+function notification(id, at, line, n, voiceId, exact) {
+  const [en, pt] = line;
+  return {
+    id, title: "Inglesei · hora de praticar", body: en, largeBody: `${en}\n${pt}`,
+    schedule: { at, allowWhileIdle: true },
+    channelId: channelFor(voiceId, n), smallIcon: "ic_stat_inglesei", iconColor: "#6C4CF5", autoCancel: true,
+    // Sem a permissão de alarme exato, agenda do jeito normal (pode atrasar alguns minutos)
+    // em vez de abrir a tela de configurações de surpresa.
+    isExactNotification: exact,
+    extra: { en, pt },
+  };
+}
+
 /**
- * Agenda os próximos 21 dias de lembretes, cada um com uma frase diferente.
+ * Agenda os próximos 21 dias de lembretes.
  * reminders: [{ time: "19:30", days: [0..6] (0 = domingo), on: true }]
- * pickPhrase(n) devolve [inglês, português].
+ * lines: [[inglês, português]] — o áudio da frase n é lembrete_<voz>_<n>
+ * voiceId: voz natural escolhida (ou null para o som padrão)
  */
-export async function scheduleReminders(reminders, pickPhrase) {
-  if (!isNative) return 0;
+export async function scheduleReminders(reminders, lines, voiceId) {
+  if (!isNative) return [];
+  const st = await notificationStatus();
+  const exact = st.exact === "granted";
   const pending = await LocalNotifications.getPending();
-  const old = pending.notifications.filter((n) => n.id >= ID_BASE && n.id < ID_BASE + 100000).map((n) => ({ id: n.id }));
+  const old = pending.notifications.filter((x) => x.id >= ID_BASE && x.id < ID_BASE + 100000).map((x) => ({ id: x.id }));
   if (old.length) await LocalNotifications.cancel({ notifications: old });
-  try {
-    await LocalNotifications.createChannel({ id: CHANNEL, name: "Lembretes de estudo", description: "Hora de praticar inglês", importance: 4, vibration: true, visibility: 1 });
-  } catch { /* canais só existem no Android 8+ */ }
+  await ensureChannels(voiceId, lines.length);
   const now = new Date();
   const list = [];
-  let n = 0;
+  let k = 0;
   reminders.filter((r) => r.on && r.days.length && /^\d{2}:\d{2}$/.test(r.time)).forEach((r, ri) => {
     const [hh, mm] = r.time.split(":").map(Number);
     for (let d = 0; d <= DAYS_AHEAD; d++) {
       const at = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d, hh, mm, 0);
       if (at <= now || !r.days.includes(at.getDay())) continue;
-      const [en, pt] = pickPhrase(n++);
-      list.push({
-        id: ID_BASE + ri * 1000 + d,
-        title: "Inglesei · hora de praticar",
-        body: en,
-        largeBody: `${en}\n${pt}`,
-        schedule: { at, allowWhileIdle: true },
-        channelId: CHANNEL,
-        smallIcon: "ic_stat_inglesei",
-        iconColor: "#D6402B",
-        autoCancel: true,
-        extra: { en, pt },
-      });
+      const n = (d + ri + k++) % lines.length;
+      list.push(notification(ID_BASE + ri * 1000 + d, at, lines[n], n, voiceId, exact));
     }
   });
   if (list.length) await LocalNotifications.schedule({ notifications: list });
-  return list.length;
+  return list.map((x) => x.schedule.at).sort((a, b) => a - b);
 }
 
-export async function testReminder(en, pt) {
+/** Próximos lembretes já agendados no aparelho (datas). */
+export async function upcomingReminders() {
+  if (!isNative) return [];
+  const p = await LocalNotifications.getPending();
+  return p.notifications.filter((x) => x.id >= ID_BASE && x.schedule && x.schedule.at).map((x) => new Date(x.schedule.at)).sort((a, b) => a - b);
+}
+
+export async function testReminder(line, n, voiceId) {
   if (!isNative) return false;
-  try { await LocalNotifications.createChannel({ id: CHANNEL, name: "Lembretes de estudo", importance: 4, vibration: true, visibility: 1 }); } catch { /* nada */ }
-  await LocalNotifications.schedule({ notifications: [{
-    id: 99999, title: "Inglesei · hora de praticar", body: en, largeBody: `${en}\n${pt}`,
-    schedule: { at: new Date(Date.now() + 5000), allowWhileIdle: true }, channelId: CHANNEL,
-    smallIcon: "ic_stat_inglesei", iconColor: "#D6402B", autoCancel: true, extra: { en, pt },
-  }] });
+  await ensureChannels(voiceId, n + 1);
+  await LocalNotifications.schedule({ notifications: [notification(99999, new Date(Date.now() + 8000), line, n, voiceId, false)] });
   return true;
 }
 

@@ -3,7 +3,7 @@
   "appName": "Inglesei",
   "webDir": "www",
   "android": {
-    "backgroundColor": "#f4f6fb"
+    "backgroundColor": "#f6f4ff"
   },
   "plugins": {
     "LocalNotifications": {

@@ -90,3 +90,22 @@ export const MOTIVATION = [
   ["Ready to level up your English?", "Pronto para subir de nível no inglês?"],
   ["You didn't come this far to only come this far.", "Você não chegou até aqui para parar aqui."],
 ];
+
+// Frases faladas pela notificação do lembrete (o áudio é gerado com voz natural no build do app).
+// Só ACRESCENTE no fim: o índice vira o nome do arquivo de som (lembrete_<voz>_<n>).
+export const REMINDER_LINES = [
+  ["Hey! It's time to study English!", "Ei! É hora de estudar inglês!"],
+  ["English time! Let's practice together.", "Hora do inglês! Vamos praticar juntos."],
+  ["Your English lesson is waiting for you. Let's go!", "Sua aula de inglês está te esperando. Bora!"],
+  ["Ready? Just ten minutes of English today.", "Pronto? Só dez minutos de inglês hoje."],
+  ["Don't break your streak! Time to practice.", "Não quebre sua sequência! Hora de praticar."],
+  ["Hi there! Let's learn something new in English.", "Oi! Vamos aprender algo novo em inglês."],
+];
+
+// Vozes naturais embutidas no app (geradas com o Piper no GitHub Actions).
+export const PACK_VOICES = [
+  { id: "emma", name: "Emma", gender: "f", model: "en_US-lessac-medium" },
+  { id: "amy", name: "Amy", gender: "f", model: "en_US-amy-medium" },
+  { id: "ryan", name: "Ryan", gender: "m", model: "en_US-ryan-medium" },
+  { id: "joe", name: "Joe", gender: "m", model: "en_US-joe-medium" },
+];

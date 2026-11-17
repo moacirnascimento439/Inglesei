@@ -8,7 +8,8 @@ export const CLAUDE_MODELS = [
 ];
 export const GEMINI_DEFAULT_MODEL = "gemini-2.5-flash";
 
-let config = { provider: "claude", claudeKey: "", claudeModel: "claude-opus-5-5", geminiKey: "", geminiModel: GEMINI_DEFAULT_MODEL };
+let config = { provider: "claude", claudeKey: "", claudeModel: "claude-opus-5-5", geminiKey: "", geminiModel: GEMINI_DEFAULT_MODEL,
+  openaiKey: "", geminiTtsModel: "", openaiTtsModel: "" };
 export function setAIConfig(c) { config = { ...config, ...c }; }
 export function aiReady() {
   return config.provider === "gemini" ? !!config.geminiKey.trim() : !!config.claudeKey.trim();
@@ -160,4 +161,98 @@ async function geminiText({ system, messages, maxTokens, onText, signal }) {
 export async function testAI() {
   const t = await aiText({ system: "You are a connection test. Reply with exactly: OK", messages: [{ role: "user", content: "Say OK" }], maxTokens: 1000, effort: "low" });
   return t.trim();
+}
+
+// ===================== Voz com IA (texto para fala natural) =====================
+// O Claude não gera áudio; para isso usamos o Gemini (mesma chave) ou a OpenAI.
+export const GEMINI_TTS_DEFAULT = "gemini-2.5-flash-preview-tts";
+export const OPENAI_TTS_DEFAULT = "gpt-4o-mini-tts";
+export const AI_VOICES = {
+  gemini: [
+    { id: "Kore", g: "f", label: "Kore", vibe: "firme e clara" },
+    { id: "Aoede", g: "f", label: "Aoede", vibe: "leve e tranquila" },
+    { id: "Leda", g: "f", label: "Leda", vibe: "jovem" },
+    { id: "Zephyr", g: "f", label: "Zephyr", vibe: "animada" },
+    { id: "Puck", g: "m", label: "Puck", vibe: "animado" },
+    { id: "Charon", g: "m", label: "Charon", vibe: "calmo e didático" },
+    { id: "Fenrir", g: "m", label: "Fenrir", vibe: "empolgado" },
+    { id: "Orus", g: "m", label: "Orus", vibe: "firme" },
+  ],
+  openai: [
+    { id: "nova", g: "f", label: "Nova", vibe: "simpática" },
+    { id: "shimmer", g: "f", label: "Shimmer", vibe: "suave" },
+    { id: "coral", g: "f", label: "Coral", vibe: "calorosa" },
+    { id: "sage", g: "f", label: "Sage", vibe: "calma" },
+    { id: "echo", g: "m", label: "Echo", vibe: "tranquilo" },
+    { id: "onyx", g: "m", label: "Onyx", vibe: "grave" },
+    { id: "ash", g: "m", label: "Ash", vibe: "descontraído" },
+    { id: "alloy", g: "n", label: "Alloy", vibe: "neutra" },
+  ],
+};
+export function aiSpeechReady(provider) {
+  if (provider === "gemini") return !!config.geminiKey.trim();
+  if (provider === "openai") return !!config.openaiKey.trim();
+  return false;
+}
+
+function pcmToWav(bytes, rate) {
+  const header = new ArrayBuffer(44);
+  const v = new DataView(header);
+  const str = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF"); v.setUint32(4, 36 + bytes.length, true); str(8, "WAVE"); str(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, bytes.length, true);
+  return new Blob([header, bytes], { type: "audio/wav" });
+}
+async function speechError(res) {
+  let detail = "";
+  try { detail = (await res.json()).error?.message || ""; } catch { /* sem corpo */ }
+  if (res.status === 401 || res.status === 403 || (res.status === 400 && /api key/i.test(detail))) return new AIError("auth");
+  if (res.status === 404) return new AIError("not_found");
+  if (res.status === 429) return new AIError("rate_limited", detail);
+  if (res.status === 400) return new AIError("bad_request", detail);
+  return new AIError("server", detail);
+}
+
+/** Gera o áudio de um texto com voz natural. Devolve um Blob de áudio. */
+export async function aiSpeech(text, { provider, voice, lang = "en-US", signal } = {}) {
+  if (!aiSpeechReady(provider)) throw new AIError("no_key");
+  let res;
+  try {
+    if (provider === "gemini") {
+      const model = (config.geminiTtsModel || GEMINI_TTS_DEFAULT).trim();
+      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: "POST", signal,
+        headers: { "Content-Type": "application/json", "x-goog-api-key": config.geminiKey.trim() },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text }] }],
+          generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice || "Kore" } } } },
+        }),
+      });
+    } else {
+      res = await fetch("https://api.openai.com/v1/audio/speech", {
+        method: "POST", signal,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.openaiKey.trim()}` },
+        body: JSON.stringify({
+          model: (config.openaiTtsModel || OPENAI_TTS_DEFAULT).trim(), voice: voice || "nova", input: text, response_format: "mp3",
+          instructions: lang.startsWith("pt")
+            ? "Fale em português do Brasil, de forma natural e simpática, no ritmo de uma conversa normal."
+            : "Speak natural, friendly American English at a normal conversational pace, like a real person talking.",
+        }),
+      });
+    }
+  } catch {
+    if (signal && signal.aborted) throw new AIError("cancelled");
+    throw new AIError("offline");
+  }
+  if (!res.ok) throw await speechError(res);
+  if (provider === "openai") return await res.blob();
+  const data = await res.json();
+  const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData && p.inlineData.data);
+  if (!part) throw new AIError("empty");
+  const rate = Number((String(part.inlineData.mimeType).match(/rate=(\d+)/) || [])[1]) || 24000;
+  const bin = atob(part.inlineData.data);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return pcmToWav(bytes, rate);
 }

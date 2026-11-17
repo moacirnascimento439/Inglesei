@@ -2,14 +2,19 @@
 import { App as CapApp } from "@capacitor/app";
 import { LEVELS, LESSONS } from "./content/lessons.js";
 import { REGISTERS, SLANG_CATS, SLANG, PHRASAL, IDIOMS } from "./content/expressions.js";
-import { SCENARIOS, SCENARIO_GROUPS, CONV_LEVELS, WRITING_TOPICS, MOTIVATION } from "./content/scenarios.js";
+import { SCENARIOS, SCENARIO_GROUPS, CONV_LEVELS, WRITING_TOPICS, MOTIVATION, REMINDER_LINES, PACK_VOICES } from "./content/scenarios.js";
+import { SLANG_EMOJI, PHRASAL_EMOJI, IDIOM_EMOJI } from "./content/emojis.js";
 import {
-  isNative, canSpeak, speak, stopSpeaking, onSpeakingChange, listEnglishVoices, canListen, listen,
+  isNative, listEnglishVoices, canListen, listen, openCamera,
   remindersSupported, notificationStatus, requestNotificationPermission, openExactAlarmSettings,
-  scheduleReminders, testReminder, onReminderOpened,
+  scheduleReminders, upcomingReminders, testReminder, onReminderOpened,
 } from "./platform.js";
-import { setAIConfig, aiReady, aiName, aiText, aiJSON, aiErrorText, testAI, CLAUDE_MODELS, GEMINI_DEFAULT_MODEL } from "./ai.js";
-import { avatarSVG, lessonToSlides, aiLessonToSlides, createPlayer, TUTOR_NAME } from "./tutor.js";
+import { setAIConfig, aiReady, aiName, aiText, aiJSON, aiErrorText, testAI, CLAUDE_MODELS, GEMINI_DEFAULT_MODEL,
+  AI_VOICES, aiSpeech, aiSpeechReady, GEMINI_TTS_DEFAULT, OPENAI_TTS_DEFAULT } from "./ai.js";
+import { setVoiceConfig, loadPack, packVoices, hasPack, canSpeak, speak, stopSpeaking, onSpeakingChange, playClip,
+  reminderClipUrl, usingAIVoice, lastVoiceError, clearVoiceCache } from "./voice.js";
+import { lessonToSlides, aiLessonToSlides, createPlayer } from "./tutor.js";
+import { AVATARS, avatarById, avatarSVG, photoAvatarHTML, tutorRef, tutorTitle } from "./avatars.js";
 
 // ---------- Utilidades ----------
 /** Troca o conteúdo de um elemento ignorando itens vazios (null/false), que senão viram o texto "null". */
@@ -46,6 +51,8 @@ const ICONS = {
   play: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9l5 3-5 3z"/>',
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  video: '<rect x="2" y="6" width="14" height="12" rx="3"/><path d="M16 10l6-3v10l-6-3z"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
 };
 function icon(name) {
@@ -58,6 +65,7 @@ function icon(name) {
 const norm = (s) => String(s).toLowerCase().replace(/[’‘`]/g, "'").replace(/[.,!?;:"“”]/g, "").replace(/\s+/g, " ").trim();
 function shuffle(a) { const b = [...a]; for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; }
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const fmtDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const today = () => fmtDate(new Date());
 const addDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return fmtDate(d); };
@@ -72,14 +80,40 @@ const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); 
 const S_KEY = "inglesei:settings";
 const defaultSettings = () => ({
   provider: "claude", claudeKey: "", claudeModel: "claude-opus-5-5", geminiKey: "", geminiModel: GEMINI_DEFAULT_MODEL,
-  voice: null, rate: 1, pitch: 1, voiceMode: false, speakOnOpen: true, onboarded: false,
+  deviceVoice: null, rate: 1, pitch: 1, voiceMode: false, speakOnOpen: true, onboarded: false,
   reminders: [{ id: 1, time: "19:00", days: [1, 2, 3, 4, 5], on: true }],
+  // Novidades: tema, professor(a), vozes naturais
+  palette: "vibrante", themeMode: "auto", avatar: "liz", photo: null, photoName: "", photoGender: "f",
+  packVoice: "emma", aiVoiceProvider: "off", aiVoice: "Kore", openaiKey: "", geminiTtsModel: "", openaiTtsModel: "",
 });
 let S = { ...defaultSettings(), ...(readJSON(S_KEY) || {}) };
-function saveSettings() { writeJSON(S_KEY, S); setAIConfig(S); }
-setAIConfig(S);
-const voiceOpts = () => ({ rate: S.rate, pitch: S.pitch, voice: S.voice });
-const say = (text, lang = "en-US", rate) => speak(text, { ...voiceOpts(), lang, rate: rate || S.rate });
+if (S.voice && !S.deviceVoice) { S.deviceVoice = S.voice; delete S.voice; } // versão anterior
+function applySettings() {
+  setAIConfig(S);
+  setVoiceConfig({ packVoice: S.packVoice, aiProvider: S.aiVoiceProvider, aiVoice: S.aiVoice, deviceVoice: S.deviceVoice, rate: S.rate, pitch: S.pitch });
+  const root = document.documentElement;
+  root.dataset.palette = S.palette || "vibrante";
+  if (S.themeMode === "light" || S.themeMode === "dark") root.dataset.theme = S.themeMode; else delete root.dataset.theme;
+}
+function saveSettings() { writeJSON(S_KEY, S); applySettings(); }
+applySettings();
+const say = (text, lang = "en-US", rate) => speak(text, { lang, rate });
+
+// ---------- Professor(a) escolhido(a) ----------
+function tutor() {
+  if (S.avatar === "foto" && S.photo) return { id: "foto", name: S.photoName || "Teacher", g: S.photoGender === "m" ? "m" : "f", photo: S.photo };
+  return avatarById(S.avatar);
+}
+function faceHTML(size, t = tutor()) {
+  return t.photo ? photoAvatarHTML(t.photo, size, t.name) : avatarSVG(t, size);
+}
+/** Elemento com o rosto do professor que "fala" (anima) enquanto há áudio tocando. */
+function talkingFace(size, cls = "face") {
+  const node = el("div", { class: cls, html: faceHTML(size) });
+  const off = onSpeakingChange((on) => node.classList.toggle("talking", on));
+  node._off = off;
+  return node;
+}
 
 // ---------- Progresso ----------
 const P_KEY = "inglesei:progress";
@@ -243,9 +277,10 @@ function validMC(arr, max = 6) {
 }
 
 // ---------- Navegação ----------
-const SIDE_NAV = [["inicio", "Início", "home"], ["trilha", "Trilha", "route"], ["aulas", "Vídeo-aulas", "play"], ["conversa", "Conversa com IA", "chat"],
-  ["expressoes", "Gírias e expressões", "book"], ["treino", "Treino", "target"], ["lembretes", "Lembretes", "bell"], ["ajustes", "Ajustes", "gear"]];
-const TAB_NAV = [["inicio", "Início", "home"], ["trilha", "Trilha", "route"], ["conversa", "Conversa", "chat"], ["treino", "Treino", "target"], ["mais", "Mais", "grid"]];
+const SIDE_NAV = [["inicio", "Início", "home"], ["trilha", "Trilha", "route"], ["chamada", "Chamada de vídeo", "video"], ["conversa", "Conversa com IA", "chat"],
+  ["aulas", "Vídeo-aulas", "play"], ["treino", "Treino", "target"], ["expressoes", "Gírias e expressões", "book"], ["professores", "Professores", "user"],
+  ["vozes", "Vozes", "speaker"], ["lembretes", "Lembretes", "bell"], ["ajustes", "Ajustes", "gear"]];
+const TAB_NAV = [["inicio", "Início", "home"], ["trilha", "Trilha", "route"], ["chamada", "Chamada", "video"], ["conversa", "Conversa", "chat"], ["mais", "Mais", "grid"]];
 function buildNav() {
   put($("#side-nav"), ...SIDE_NAV.map(([id, label, ic]) => el("a", { class: "navlink", href: "#" + id, "data-nav": id }, icon(ic), label)));
   put($("#tab-nav"), ...TAB_NAV.map(([id, label, ic]) => el("a", { href: "#" + id, "data-nav": id }, icon(ic), label)));
@@ -254,8 +289,8 @@ function updateChrome() {
   $("#side-xp").textContent = P.xp;
   $("#side-streak").textContent = streakNow();
 }
-const VIEWS = ["inicio", "trilha", "licao", "aula", "aulas", "expressoes", "conversa", "treino", "lembretes", "ajustes", "mais", "motivacao"];
-const MORE_VIEWS = ["mais", "aulas", "aula", "expressoes", "lembretes", "ajustes"];
+const VIEWS = ["inicio", "trilha", "licao", "aula", "aulas", "expressoes", "conversa", "treino", "lembretes", "ajustes", "mais", "motivacao", "professores", "vozes", "chamada"];
+const MORE_VIEWS = ["mais", "aulas", "aula", "expressoes", "lembretes", "ajustes", "treino", "professores", "vozes"];
 let currentCleanup = null;
 function route() {
   const h = decodeURIComponent(location.hash.slice(1)) || "inicio";
@@ -270,7 +305,8 @@ function route() {
   $$("#side-nav [data-nav]").forEach((a) => (a.dataset.nav === sideId ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
   $$("#tab-nav [data-nav]").forEach((a) => (a.dataset.nav === tabId ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
   ({ inicio: renderInicio, trilha: renderTrilha, licao: () => renderLicao(arg), aula: () => renderAula(arg), aulas: renderAulas, expressoes: renderExpressoes,
-    conversa: renderConversa, treino: renderTreino, lembretes: renderLembretes, ajustes: renderAjustes, mais: renderMais, motivacao: renderMotivacao })[view]();
+    conversa: renderConversa, treino: renderTreino, lembretes: renderLembretes, ajustes: renderAjustes, mais: renderMais, motivacao: renderMotivacao,
+    professores: renderProfessores, vozes: renderVozes, chamada: renderChamada })[view]();
 }
 let lastView = "";
 window.addEventListener("hashchange", () => {
@@ -294,8 +330,8 @@ function renderInicio() {
   const motiv = MOTIVATION[dayNum() % MOTIVATION.length];
   put(v, 
     !S.onboarded ? el("section", { class: "card welcome stack" },
-      el("div", { class: "welcome-row" }, el("div", { class: "welcome-face", html: avatarSVG(84) }),
-        el("div", { class: "stack", style: "gap:4px" }, el("h2", {}, `Bem-vindo ao Inglesei! Eu sou a ${TUTOR_NAME}.`),
+      el("div", { class: "welcome-row" }, el("div", { class: "welcome-face", html: faceHTML(84) }),
+        el("div", { class: "stack", style: "gap:4px" }, el("h2", {}, `Bem-vindo ao Inglesei! Eu sou ${tutorRef(tutor())}.`),
           el("p", {}, "A trilha, as gírias, as vídeo-aulas e o treino já funcionam. Para conversar comigo, configure a IA em 2 minutos."))),
       el("div", { class: "row" },
         el("a", { class: "btn primary", href: "#ajustes", onclick: () => { S.onboarded = true; saveSettings(); } }, icon("gear"), "Configurar IA"),
@@ -317,7 +353,7 @@ function renderInicio() {
         el("a", { class: "btn primary", href: "#licao-" + nl.id }, "Abrir lição", icon("arrowR")))),
     el("section", { class: "actions" },
       action("#conversa", "chat", "Conversar com a IA", `${SCENARIOS.length} situações reais, com correção e voz`),
-      action("#aulas", "play", "Vídeo-aulas", `A professora ${TUTOR_NAME} explica com voz e legenda`),
+      action("#aulas", "play", "Vídeo-aulas", `${cap(tutorRef(tutor()))} explica com voz e legenda`),
       action("#treino", "target", "Revisar flashcards", "Repetição espaçada de gírias e expressões", () => (train.mode = "flash")),
       action("#expressoes", "book", "Gírias americanas", `${SLANG.length} gírias, ${PHRASAL.length} phrasal verbs e ${IDIOMS.length} idioms`)),
     el("section", { class: "card slang-day stack" },
@@ -372,7 +408,7 @@ function renderLicao(id) {
   put(v, 
     el("div", { class: "row" }, el("a", { class: "btn ghost small", href: "#trilha" }, icon("arrowL"), "Trilha")),
     el("header", { class: "lesson-head" }, el("div", { class: "row" }, el("span", { class: "lvl" }, L.lvl), el("span", { class: "eyebrow" }, `${lv.name} · lição ${idx + 1} de ${LESSONS.length}`)), el("h1", {}, L.title),
-      el("a", { class: "btn dark", href: "#aula-" + L.id, style: "justify-self:start" }, icon("play"), `Assistir vídeo-aula com a ${TUTOR_NAME}`)),
+      el("a", { class: "btn dark", href: "#aula-" + L.id, style: "justify-self:start" }, icon("play"), `Assistir vídeo-aula com ${tutorRef(tutor())}`)),
     el("section", { class: "card stack" }, el("span", { class: "eyebrow" }, "Teoria"), theory),
     el("section", { class: "card stack" }, el("span", { class: "eyebrow" }, "Exemplos · toque para ouvir"),
       el("div", { class: "examples" }, ...L.ex.map(([en, pt]) => el("div", { class: "example" }, speakBtn(en), el("div", {}, el("div", { class: "en" }, en), el("div", { class: "pt" }, pt)))))),
@@ -404,11 +440,11 @@ function completeLesson(L, correct, total, box) {
 function teacherCard(L) {
   const out = el("div", { class: "stack" });
   const card = el("section", { class: "card stack" },
-    el("div", { class: "row spread" }, el("h2", {}, `Pergunte à ${TUTOR_NAME}`), el("span", { class: "ai-tag" }, "IA")),
+    el("div", { class: "row spread" }, el("h2", {}, `Pergunte ${tutor().g === "f" ? "à" : "ao"} ${tutor().name}`), el("span", { class: "ai-tag" }, "IA")),
     el("p", { class: "muted" }, "Tire dúvidas sobre esta lição ou peça exercícios novos, quantas vezes quiser."));
   if (!aiReady()) { card.append(aiGate()); return card; }
   const ta = el("textarea", { id: "teacher-q", placeholder: "Ex.: Qual a diferença entre for e since? Pode dar mais exemplos?", rows: "2", "aria-label": "Sua dúvida" });
-  const system = `Você é a ${TUTOR_NAME}, professora de inglês americano, paciente e direta, ensinando um aluno brasileiro pelo app Inglesei.`;
+  const system = `Você é ${tutorRef(tutor())}, de inglês americano, paciente e direto(a), ensinando um aluno brasileiro pelo app Inglesei.`;
   const ask = (q) => {
     if (!q.trim()) return;
     streamInto(out, { system, prompt: `Lição atual: "${L.title}" (nível ${L.lvl}).
@@ -447,9 +483,10 @@ function renderAula(id) {
     el("div", { class: "row" }, el("a", { class: "btn ghost small", href: "#aulas" }, icon("arrowL"), "Vídeo-aulas")),
     el("header", { class: "hello" }, el("span", { class: "eyebrow" }, `${L.lvl} · vídeo-aula`), el("h1", {}, L.title)),
     canSpeak() ? null : el("p", { class: "note warn" }, "A voz não está disponível neste aparelho. A aula aparece com legendas."),
+    el("div", { class: "row" }, el("a", { class: "chip", href: "#professores" }, "Trocar professor(a)"), el("a", { class: "chip", href: "#vozes" }, "Trocar voz")),
     stage,
     el("div", { class: "row" }, el("a", { class: "btn primary", href: "#licao-" + L.id }, "Ir para os exercícios", icon("arrowR"))));
-  const player = createPlayer(stage, lessonToSlides(L), voiceOpts, { onEnd: () => { P.stats.aulas = (P.stats.aulas || 0) + 1; addXP(5); } });
+  const player = createPlayer(stage, lessonToSlides(L, tutor()), { html: faceHTML(150), title: tutorTitle(tutor()) }, { onEnd: () => { P.stats.aulas = (P.stats.aulas || 0) + 1; addXP(5); } });
   currentCleanup = () => player.destroy();
 }
 const AI_TOPICS = ["Pedir comida no drive-thru", "Phrasal verbs com GET", "Gírias da Gen Z", "Inglês para entrevista de emprego em TI", "Make x do", "Como fazer small talk", "Falar de preços e dinheiro", "Inglês para viagem à Disney"];
@@ -464,10 +501,10 @@ function renderAulas() {
     if (!theme) { toast("Escreva um tema para a aula."); return; }
     topic.value = theme;
     if (player) { player.destroy(); player = null; }
-    put(out, el("p", { class: "thinking" }, `A ${TUTOR_NAME} está preparando sua aula sobre "${theme}"...`));
+    put(out, el("p", { class: "thinking" }, `${cap(tutorRef(tutor()))} está preparando sua aula sobre "${theme}"...`));
     try {
       const data = await aiJSON({ effort: "medium", maxTokens: 6000,
-        system: `Você é a ${TUTOR_NAME}, professora de inglês americano para brasileiros no app Inglesei. Suas aulas são curtas, animadas e práticas.`,
+        system: `Você é ${tutorRef(tutor())}, de inglês americano para brasileiros no app Inglesei. Suas aulas são curtas, animadas e práticas.`,
         messages: [{ role: "user", content: `Crie uma mini-aula narrada sobre: "${theme}", para um aluno de nível ${CONV_LEVELS[level.value].label}.
 Regras: de 4 a 6 slides; cada slide com 2 a 5 falas curtas (até 25 palavras cada). Explicações em português do Brasil ("lang":"pt"); frases e exemplos em inglês americano ("lang":"en"), cada exemplo seguido da tradução em português. Inclua o que um americano realmente diria. O último slide é uma revisão.
 Depois crie 3 exercícios de múltipla escolha sobre a aula.
@@ -481,7 +518,7 @@ Responda apenas com JSON neste formato:
       let n = 0, got = 0;
       put(out, el("h2", {}, String(data.title || theme)), stage,
         quiz.length ? el("section", { class: "stack" }, el("h2", {}, "Teste rápido"), ...quiz.map((x, i) => renderExercise(["mc", x.q, x.options, x.answer, String(x.explain || "")], i, (ok) => { n++; if (ok) got++; if (n === quiz.length && got) addXP(got * 3); }))) : null);
-      player = createPlayer(stage, aiLessonToSlides({ slides }), voiceOpts, { onEnd: () => addXP(5) });
+      player = createPlayer(stage, aiLessonToSlides({ slides }), { html: faceHTML(150), title: tutorTitle(tutor()) }, { onEnd: () => addXP(5) });
       currentCleanup = () => player && player.destroy();
     } catch (e) { put(out, el("p", { class: "note warn" }, aiErrorText(e))); }
   };
@@ -490,8 +527,8 @@ Responda apenas com JSON neste formato:
     el("div", { class: "lesson-list", style: "margin-top:10px" }, ...LESSONS.filter((l) => l.lvl === lv.id).map((l) =>
       el("a", { class: "lesson-item", href: "#aula-" + l.id }, el("span", { class: "lesson-num" }, String(LESSONS.indexOf(l) + 1).padStart(2, "0")), el("span", { class: "t" }, l.title), icon("play"))))));
   put(v, 
-    el("header", { class: "hello" }, el("span", { class: "eyebrow" }, "Aulas com voz e legenda"), el("h1", {}, `Vídeo-aulas com a ${TUTOR_NAME}`),
-      el("p", { class: "muted" }, `A professora ${TUTOR_NAME} explica cada lição falando, com legenda e slides. Ou peça uma aula sob medida sobre qualquer assunto.`)),
+    el("header", { class: "hello" }, el("span", { class: "eyebrow" }, "Aulas com voz e legenda"), el("h1", {}, `Vídeo-aulas com ${tutorRef(tutor())}`),
+      el("p", { class: "muted" }, `${cap(tutorRef(tutor()))} explica cada lição falando, com legenda e slides. Ou peça uma aula sob medida sobre qualquer assunto.`)),
     el("section", { class: "card stack" },
       el("div", { class: "row spread" }, el("h2", {}, "Aula sob medida com IA"), el("span", { class: "ai-tag" }, "IA")),
       aiReady() ? el("div", { class: "stack" },
@@ -507,6 +544,15 @@ Responda apenas com JSON neste formato:
 
 // ---------- Gírias e expressões ----------
 const DECKS = { s: { name: "Gírias", list: SLANG }, p: { name: "Phrasal verbs", list: PHRASAL }, i: { name: "Idioms", list: IDIOMS } };
+const EMOJI = { s: SLANG_EMOJI, p: PHRASAL_EMOJI, i: IDIOM_EMOJI };
+const emojiFor = (key) => (EMOJI[key[0]] || [])[Number(key.slice(1))] || "💬";
+// Cores dos cartões: uma por tema de gíria, e uma para phrasal verbs e idioms.
+const CARD_GRADS = ["#6c4cf5,#b245e8", "#ff4f7b,#ff8a5b", "#00a3a3,#1f6feb", "#15913f,#84cc16", "#f59e0b,#ef4444", "#0ea5e9,#6366f1", "#d946ef,#f43f5e", "#14b8a6,#22c55e"];
+function cardGrad(key) {
+  const item = DECKS[key[0]].list[Number(key.slice(1))];
+  const i = key[0] === "s" ? item[4] : key[0] === "p" ? 5 : 2;
+  return `linear-gradient(145deg,${CARD_GRADS[i % CARD_GRADS.length]})`;
+}
 const expr = { tab: "s", q: "", cat: -1, reg: -1 };
 const isFav = (k) => P.favs.includes(k);
 function toggleFav(k, btn) {
@@ -525,13 +571,14 @@ function exprCard(key) {
   const favBtn = el("button", { class: "icon-btn" + (isFav(key) ? " on" : ""), type: "button", "aria-label": "Favoritar", "aria-pressed": String(isFav(key)), title: "Favoritar" }, icon("star"));
   favBtn.addEventListener("click", () => toggleFav(key, favBtn));
   return el("article", { class: "card expr" },
-    el("div", { class: "expr-top" }, el("div", { class: "term" }, term), el("div", { class: "expr-tools" }, speakBtn(term), favBtn)),
+    el("div", { class: "expr-top" }, el("div", { class: "expr-head" }, el("span", { class: "expr-emoji", style: `background:${cardGrad(key)}`, "aria-hidden": "true" }, emojiFor(key)), el("div", { class: "term" }, term)),
+      el("div", { class: "expr-tools" }, speakBtn(term), favBtn)),
     el("div", { class: "row" }, reg != null ? el("span", { class: `reg reg-${reg}`, title: REGISTERS[reg].hint }, REGISTERS[reg].label) : el("span", { class: "chip" }, DECKS[deck].name),
       deck === "s" ? el("span", { class: "chip" }, SLANG_CATS[item[4]]) : null),
     el("div", { class: "mean" }, mean),
     el("div", { class: "row", style: "align-items:flex-start;flex-wrap:nowrap" }, speakBtn(en, "Ouvir exemplo"), el("div", { style: "min-width:0" }, el("div", { class: "exen" }, en), el("div", { class: "expt" }, pt))),
     aiReady() ? el("button", { class: "btn small ghost", type: "button", style: "justify-self:start", onclick: () => streamInto(aiBox, {
-      system: `Você é a ${TUTOR_NAME}, professora de inglês americano para brasileiros.`, effort: "low",
+      system: `Você é ${tutorRef(tutor())}, de inglês americano para brasileiros.`, effort: "low",
       prompt: `Explique a expressão do inglês americano "${term}" (significado: ${mean}).
 Dê: 1) quando usar e com quem (tom e registro); 2) três exemplos novos e naturais em inglês, cada um com tradução; 3) uma alternativa mais neutra, se for muito informal ou vulgar.
 Responda em português, curto, usando listas com "-".` }) }, icon("spark"), "Mais exemplos com IA") : null,
@@ -726,7 +773,7 @@ function renderConversa() {
   const corrBtn = el("button", { class: "chip", type: "button", "aria-pressed": "true" }, "Correções ligadas");
   corrBtn.addEventListener("click", () => { conv.correct = !conv.correct; corrBtn.setAttribute("aria-pressed", String(conv.correct)); corrBtn.textContent = conv.correct ? "Correções ligadas" : "Correções desligadas"; });
   const voiceBtn = el("button", { class: "chip", type: "button", "aria-pressed": String(S.voiceMode), hidden: !canSpeak() }, "Modo voz");
-  voiceBtn.addEventListener("click", () => { S.voiceMode = !S.voiceMode; saveSettings(); voiceBtn.setAttribute("aria-pressed", String(S.voiceMode)); toast(S.voiceMode ? `A ${TUTOR_NAME} vai falar as respostas` : "Modo voz desligado"); if (!S.voiceMode) stopSpeaking(); });
+  voiceBtn.addEventListener("click", () => { S.voiceMode = !S.voiceMode; saveSettings(); voiceBtn.setAttribute("aria-pressed", String(S.voiceMode)); toast(S.voiceMode ? `${cap(tutorRef(tutor()))} vai falar as respostas` : "Modo voz desligado"); if (!S.voiceMode) stopSpeaking(); });
   const input = el("textarea", { id: "conv-input", rows: "1", placeholder: "Escreva em inglês (ou em português, se travar)...", "aria-label": "Sua mensagem" });
   input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(160, input.scrollHeight) + "px"; });
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendConv(); } });
@@ -748,9 +795,7 @@ function renderConversa() {
       },
     });
   });
-  const face = el("div", { class: "chat-face", html: avatarSVG(46) });
-  const off = onSpeakingChange((on) => face.classList.toggle("talking", on));
-  void off;
+  const face = talkingFace(46, "chat-face");
   put(v, 
     el("header", { class: "hello" }, el("span", { class: "eyebrow" }, `Conversação com IA · ${SCENARIOS.length} situações`), el("h1", {}, "Converse como nos EUA"),
       el("p", { class: "muted" }, "Escolha a situação e responda como se fosse real. A correção de cada frase aparece em amarelo. No modo voz, você fala pelo microfone e a professora responde em voz alta.")),
@@ -824,38 +869,87 @@ function trainFlash(body) {
   const due = keys.filter((k) => P.cards[k] && P.cards[k].due <= t);
   const novos = keys.filter((k) => !P.cards[k]);
   const queue = [...shuffle(due), ...shuffle(novos).slice(0, Math.max(0, 10 - due.length))].slice(0, 20);
-  let done = 0;
+  const total = queue.length;
+  let done = 0, right = 0, wrong = 0;
+  const bar = el("div", { class: "fc-progress" }, el("i"));
+  const score = el("div", { class: "fc-score" });
+  const drawScore = () => {
+    bar.firstChild.style.width = `${total ? (done / total) * 100 : 0}%`;
+    put(score, el("span", { class: "fc-ok" }, `✓ ${right}`), el("span", { class: "muted" }, `${Math.max(0, total - done)} restantes`), el("span", { class: "fc-no" }, `✗ ${wrong}`));
+  };
+  area.before(bar, score);
+  drawScore();
   const grade = (key, g) => {
     const c = P.cards[key] || { box: 0, due: t };
-    if (g === 0) { c.box = 1; c.due = t; queue.push(key); }
-    else if (g === 1) { c.box = Math.max(1, c.box); c.due = addDays(1); }
-    else { c.box = Math.min(5, c.box + 1); c.due = addDays([0, 1, 3, 7, 14, 30][c.box]); }
+    if (g === 0) { c.box = 1; c.due = t; wrong++; }
+    else if (g === 1) { c.box = Math.max(1, c.box); c.due = addDays(1); right++; }
+    else { c.box = Math.min(5, c.box + 1); c.due = addDays([0, 1, 3, 7, 14, 30][c.box]); right++; }
     P.cards[key] = c; done++;
     addXP(2, true);
+    drawScore();
     show();
   };
   const show = () => {
     const key = queue.shift();
     if (!key) {
-      put(area, el("div", { class: "card flash" }, el("h2", {}, done ? `Sessão concluída: ${done} cartões` : "Nada para revisar agora"),
-        el("p", { class: "muted" }, deck === "f" && !keys.length ? "Você ainda não tem favoritos. Marque a estrela nas expressões." : "Volte amanhã para revisar o que está agendado."),
-        el("div", { class: "row center" }, el("a", { class: "btn", href: "#expressoes" }, "Ver expressões"))));
+      put(area, el("div", { class: "card fc-end" },
+        el("div", { class: "fc-burst" }, done ? (right >= wrong ? "🎉" : "💪") : "😴"),
+        el("h2", {}, done ? `Rodada concluída: ${right} de ${done}` : "Nada para revisar agora"),
+        el("p", { class: "muted" }, deck === "f" && !keys.length ? "Você ainda não tem favoritos. Marque a estrela nas expressões." : done ? `+${done * 2} XP. Os cartões que você errou voltam antes.` : "Volte amanhã para revisar o que está agendado."),
+        el("div", { class: "row center" },
+          done ? el("button", { class: "btn primary", type: "button", onclick: () => renderTreino() }, icon("refresh"), "Nova rodada") : null,
+          el("a", { class: "btn", href: "#expressoes" }, "Ver expressões"))));
       return;
     }
     const item = DECKS[key[0]].list[Number(key.slice(1))];
-    const back = el("div", { class: "stack", hidden: true },
-      el("p", { class: "flash-mean" }, el("strong", {}, item[1])),
-      el("div", { class: "row center" }, speakBtn(item[2], "Ouvir exemplo"), el("em", {}, item[2])),
-      el("p", { class: "muted" }, item[3]),
-      el("div", { class: "flash-btns" },
-        el("button", { class: "btn", type: "button", onclick: () => grade(key, 0) }, "Errei"),
-        el("button", { class: "btn", type: "button", onclick: () => grade(key, 1) }, "Difícil"),
-        el("button", { class: "btn primary", type: "button", onclick: () => grade(key, 2) }, "Acertei")));
-    const reveal = el("button", { class: "btn dark", type: "button", onclick: () => { back.hidden = false; reveal.hidden = true; } }, "Mostrar resposta");
-    put(area, el("div", { class: "card flash" },
-      el("span", { class: "eyebrow" }, `${DECKS[key[0]].name} · faltam ${queue.length + 1}`),
-      el("div", { class: "row center" }, el("span", { class: "term" }, item[0]), speakBtn(item[0])),
-      reveal, back));
+    const reg = key[0] === "s" ? item[5] : null;
+    const front = el("div", { class: "fc-face fc-front", style: `background:${cardGrad(key)}` },
+      el("span", { class: "fc-deck" }, key[0] === "s" ? SLANG_CATS[item[4]] : DECKS[key[0]].name),
+      el("div", { class: "fc-emoji" }, emojiFor(key)),
+      el("div", { class: "fc-term" }, item[0]),
+      el("span", { class: "fc-hint" }, "Toque para virar · arraste para responder"));
+    const back = el("div", { class: "fc-face fc-back" },
+      el("div", { class: "fc-emoji small" }, emojiFor(key)),
+      el("div", { class: "fc-mean" }, item[1]),
+      el("div", { class: "fc-example" }, el("em", {}, item[2]), el("span", { class: "muted" }, item[3])),
+      reg != null ? el("span", { class: `reg reg-${reg}` }, REGISTERS[reg].label) : null);
+    const inner = el("div", { class: "fc-inner" }, front, back);
+    const card = el("div", { class: "fc", role: "button", tabindex: "0", "aria-label": `Cartão: ${item[0]}. Toque para virar.` }, inner);
+    const sayBtn = el("button", { class: "icon-btn fc-say", type: "button", "aria-label": "Ouvir" }, icon("speaker"));
+    sayBtn.addEventListener("click", (e) => { e.stopPropagation(); say(card.classList.contains("flipped") ? item[2] : item[0]); });
+    card.append(sayBtn);
+    const flip = () => { card.classList.toggle("flipped"); if (card.classList.contains("flipped")) say(item[2]); };
+    // Arrastar para os lados (direita = acertei, esquerda = errei)
+    let x0 = null, dx = 0, moved = false;
+    card.addEventListener("pointerdown", (e) => { x0 = e.clientX; dx = 0; moved = false; card.setPointerCapture(e.pointerId); card.classList.add("dragging"); });
+    card.addEventListener("pointermove", (e) => {
+      if (x0 == null) return;
+      dx = e.clientX - x0; if (Math.abs(dx) > 6) moved = true;
+      card.style.transform = `translateX(${dx}px) rotate(${dx / 18}deg)`;
+      card.dataset.swipe = dx > 60 ? "ok" : dx < -60 ? "no" : "";
+    });
+    const release = () => {
+      if (x0 == null) return;
+      x0 = null; card.classList.remove("dragging");
+      if (Math.abs(dx) > 90) {
+        card.style.transition = "transform .25s ease, opacity .25s";
+        card.style.transform = `translateX(${dx > 0 ? 500 : -500}px) rotate(${dx > 0 ? 25 : -25}deg)`;
+        card.style.opacity = "0";
+        setTimeout(() => grade(key, dx > 0 ? 2 : 0), 220);
+      } else {
+        card.style.transform = ""; card.dataset.swipe = "";
+        if (!moved) flip();
+      }
+    };
+    card.addEventListener("pointerup", release);
+    card.addEventListener("pointercancel", release);
+    card.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); } });
+    put(area, card,
+      el("div", { class: "fc-actions" },
+        el("button", { class: "fc-act no", type: "button", "aria-label": "Errei", onclick: () => grade(key, 0) }, "✗", el("span", {}, "Errei")),
+        el("button", { class: "fc-act mid", type: "button", "aria-label": "Difícil", onclick: () => grade(key, 1) }, "😐", el("span", {}, "Difícil")),
+        el("button", { class: "fc-act ok", type: "button", "aria-label": "Acertei", onclick: () => grade(key, 2) }, "✓", el("span", {}, "Acertei"))));
+    say(item[0]);
   };
   show();
 }
@@ -937,7 +1031,7 @@ function trainWrite(body) {
     el("button", { class: "btn primary", type: "button", style: "justify-self:start", onclick: async () => {
       const text = ta.value.trim();
       if (text.split(/\s+/).length < 5) { toast("Escreva pelo menos uma frase completa."); return; }
-      const r = await streamInto(out, { system: `Você é a ${TUTOR_NAME}, professora de inglês americano que corrige redações de alunos brasileiros com carinho e precisão.`, prompt: `Tema: "${topic}"
+      const r = await streamInto(out, { system: `Você é ${tutorRef(tutor())}, de inglês americano, e corrige redações de alunos brasileiros com carinho e precisão.`, prompt: `Tema: "${topic}"
 Texto do aluno:
 """
 ${text.slice(0, 4000)}
@@ -972,28 +1066,44 @@ function trainQuiz(body) {
 // ---------- Lembretes ----------
 const WEEKDAYS = ["D", "S", "T", "Q", "Q", "S", "S"];
 const WEEKDAY_NAMES = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
-const phraseFor = (n) => MOTIVATION[(dayNum() + n) % MOTIVATION.length];
+const reminderVoice = () => (hasPack() && packVoices().some((v) => v.id === S.packVoice) ? S.packVoice : null);
+const fmtWhen = (d) => d.toLocaleString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 async function applyReminders(quiet) {
-  if (!remindersSupported) return;
+  if (!remindersSupported) return null;
   try {
     const st = await notificationStatus();
-    if (st.display !== "granted") { if (!quiet) toast("Permita as notificações para receber os lembretes."); return; }
-    const n = await scheduleReminders(S.reminders, phraseFor);
-    if (!quiet) toast(n ? `${n} lembretes agendados para as próximas 3 semanas` : "Nenhum lembrete ativo.");
-  } catch { if (!quiet) toast("Não foi possível agendar os lembretes."); }
+    if (st.display !== "granted") { if (!quiet) toast("Permita as notificações para receber os lembretes."); return null; }
+    const dates = await scheduleReminders(S.reminders, REMINDER_LINES, reminderVoice());
+    if (!quiet) toast(dates.length ? `Pronto! ${dates.length} lembretes agendados.` : "Nenhum lembrete ativo.");
+    return dates;
+  } catch {
+    if (!quiet) toast("Não foi possível agendar os lembretes. Veja as permissões acima.");
+    return null;
+  }
 }
 async function renderLembretes() {
   const v = $("#view-lembretes");
   const list = el("div", { class: "stack" });
+  const upcoming = el("div", { class: "stack" });
+  const drawUpcoming = async () => {
+    if (!remindersSupported) return;
+    const dates = await upcomingReminders();
+    put(upcoming, dates.length
+      ? el("div", { class: "note ok stack" }, el("strong", {}, `✅ ${dates.length} lembretes agendados no celular`),
+        el("ul", { class: "when-list" }, ...dates.slice(0, 4).map((d) => el("li", {}, fmtWhen(d)))),
+        el("span", { class: "small" }, "Os próximos são renovados sozinhos sempre que você abre o app."))
+      : el("p", { class: "note warn" }, "Nenhum lembrete agendado ainda. Escolha os horários e toque em \"Salvar lembretes\"."));
+  };
   const drawList = () => {
     put(list, ...S.reminders.map((r) => {
       const time = el("input", { type: "time", value: r.time, "aria-label": "Horário", class: "time" });
       time.addEventListener("change", () => { r.time = time.value; saveSettings(); });
       const sw = el("button", { class: "switch", type: "button", role: "switch", "aria-checked": String(r.on), "aria-label": "Lembrete ligado" }, el("i"));
       sw.addEventListener("click", () => { r.on = !r.on; sw.setAttribute("aria-checked", String(r.on)); saveSettings(); });
+      const del = el("button", { class: "btn small ghost", type: "button" }, "Excluir");
+      del.addEventListener("click", () => { S.reminders = S.reminders.filter((x) => x !== r); saveSettings(); drawList(); });
       return el("div", { class: "card flat reminder" },
-        el("div", { class: "row spread" }, time, el("div", { class: "row" }, sw,
-          el("button", { class: "btn small ghost", type: "button", onclick: () => { S.reminders = S.reminders.filter((x) => x !== r); saveSettings(); drawList(); } }, "Remover"))),
+        el("div", { class: "row spread" }, time, el("div", { class: "row" }, sw, del)),
         el("div", { class: "days", role: "group", "aria-label": "Dias da semana" }, ...WEEKDAYS.map((d, i) => {
           const b = el("button", { type: "button", class: "day", "aria-pressed": String(r.days.includes(i)), "aria-label": WEEKDAY_NAMES[i] }, d);
           b.addEventListener("click", () => { r.days = r.days.includes(i) ? r.days.filter((x) => x !== i) : [...r.days, i].sort(); b.setAttribute("aria-pressed", String(r.days.includes(i))); saveSettings(); });
@@ -1004,89 +1114,109 @@ async function renderLembretes() {
   };
   drawList();
 
-  // Voz
-  const voiceSel = el("select", { id: "voice-sel", "aria-label": "Voz em inglês" }, el("option", { value: "" }, "Voz padrão do aparelho"));
-  listEnglishVoices().then((voices) => {
-    voices.forEach((vc) => voiceSel.append(el("option", { value: String(vc.index), selected: S.voice && S.voice.index === vc.index }, `${vc.name} (${vc.lang})`)));
-    if (!voices.length) voiceSel.append(el("option", { disabled: true }, "Nenhuma voz em inglês encontrada"));
-    voiceSel._voices = voices;
-  });
-  voiceSel.addEventListener("change", () => {
-    const vc = (voiceSel._voices || []).find((x) => String(x.index) === voiceSel.value);
-    S.voice = vc ? { index: vc.index, voiceURI: vc.voiceURI, name: vc.name } : null;
-    saveSettings();
-    say(pick(MOTIVATION)[0]);
-  });
-  const range = (id, label, key, min, max, step) => {
-    const out = el("span", { class: "mono" }, S[key].toFixed(1));
-    const r = el("input", { type: "range", id, min, max, step, value: S[key], "aria-label": label });
-    r.addEventListener("input", () => { S[key] = Number(r.value); out.textContent = S[key].toFixed(1); });
-    r.addEventListener("change", saveSettings);
-    return el("label", { class: "stack small-gap" }, el("span", { class: "row spread" }, el("span", {}, label), out), r);
-  };
-  const speakOpen = el("input", { type: "checkbox", id: "speak-open", checked: S.speakOnOpen });
-  speakOpen.addEventListener("change", () => { S.speakOnOpen = speakOpen.checked; saveSettings(); });
-
-  const status = el("div", { class: "stack" });
-  const drawStatus = async () => {
+  // Passo a passo das permissões
+  const steps = el("div", { class: "stack" });
+  const drawSteps = async () => {
     if (!remindersSupported) {
-      put(status, el("p", { class: "note warn" }, "Os lembretes com notificação funcionam no app Inglesei para Android. Aqui você já pode escolher a voz e os horários."));
+      put(steps, el("p", { class: "note warn" }, "As notificações funcionam no app Inglesei para Android. Aqui você já pode escolher a voz e ouvir as frases."));
       return;
     }
     const st = await notificationStatus();
-    put(status, 
-      st.display !== "granted" ? el("div", { class: "note warn stack" }, el("span", {}, "As notificações estão bloqueadas. Permita para receber os lembretes."),
-        el("button", { class: "btn dark", type: "button", style: "justify-self:start", onclick: async () => { await requestNotificationPermission(); drawStatus(); } }, icon("bell"), "Permitir notificações"))
-        : el("p", { class: "note ok" }, "Notificações permitidas."),
-      st.exact && st.exact !== "granted" ? el("div", { class: "note stack" }, el("span", {}, "Para o lembrete tocar no minuto exato, ative \"Alarmes e lembretes\" para o Inglesei."),
-        el("button", { class: "btn", type: "button", style: "justify-self:start", onclick: async () => { await openExactAlarmSettings(); drawStatus(); } }, "Abrir configuração")) : null);
+    const step = (n, done, title, text, btn) => el("div", { class: "step" + (done ? " done" : "") },
+      el("span", { class: "step-n" }, done ? "✓" : String(n)),
+      el("div", { class: "stack small-gap" }, el("strong", {}, title), el("span", { class: "muted small" }, text), done ? null : btn));
+    put(steps,
+      step(1, st.display === "granted", "Permitir notificações", "Sem isso o Android bloqueia os lembretes.",
+        el("button", { class: "btn primary small", type: "button", onclick: async () => { await requestNotificationPermission(); await drawSteps(); await applyReminders(); drawUpcoming(); } }, icon("bell"), "Permitir")),
+      step(2, st.exact === "granted", "Alarmes e lembretes (horário exato)", "Opcional: sem isso o lembrete pode chegar alguns minutos depois.",
+        el("button", { class: "btn small", type: "button", onclick: async () => { await openExactAlarmSettings(); await drawSteps(); await applyReminders(true); drawUpcoming(); } }, "Abrir configuração")),
+      el("details", { class: "step-help" }, el("summary", {}, "Os lembretes não chegam? Veja a bateria"),
+        el("p", { class: "small" }, "Em celulares Samsung, Xiaomi, Motorola e outros, a economia de bateria pode bloquear apps fechados. Abra Configurações → Apps → Inglesei → Bateria e escolha \"Sem restrições\". Depois volte aqui e toque em Salvar lembretes.")));
   };
-  drawStatus();
+  drawSteps(); drawUpcoming();
 
-  put(v, 
+  // Voz da notificação (frase falada em inglês)
+  const voices = hasPack() ? packVoices() : PACK_VOICES;
+  const voiceCards = el("div", { class: "voice-grid" }, ...voices.map((vc) => {
+    const b = el("button", { type: "button", class: "voice-card", "aria-pressed": String(S.packVoice === vc.id) },
+      el("span", { class: "voice-emoji" }, vc.gender === "f" ? "👩" : "👨"), el("b", {}, vc.name), el("span", { class: "muted small" }, vc.gender === "f" ? "mulher" : "homem"));
+    b.addEventListener("click", () => {
+      S.packVoice = vc.id; saveSettings();
+      $$(".voice-card", voiceCards).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      if (hasPack()) playClip(reminderClipUrl(vc.id, Math.floor(Math.random() * REMINDER_LINES.length)));
+    });
+    return b;
+  }));
+  const speakOpen = el("input", { type: "checkbox", id: "speak-open", checked: S.speakOnOpen });
+  speakOpen.addEventListener("change", () => { S.speakOnOpen = speakOpen.checked; saveSettings(); });
+
+  put(v,
     el("header", { class: "hello" }, el("span", { class: "eyebrow" }, "Constância é tudo"), el("h1", {}, "Lembretes de estudo"),
-      el("p", { class: "muted" }, "Escolha os horários. Cada lembrete traz uma frase diferente em inglês para te motivar. Ao tocar na notificação, a professora fala a frase com a voz que você escolher.")),
-    status,
+      el("p", { class: "muted" }, "Na hora marcada, o celular toca uma voz falando em inglês que é hora de estudar, e mostra a frase com a tradução.")),
+    steps,
+    upcoming,
     el("section", { class: "stack" }, el("h2", {}, "Horários"), list,
       el("div", { class: "row" },
         el("button", { class: "btn", type: "button", onclick: () => { S.reminders.push({ id: Date.now(), time: "08:00", days: [0, 1, 2, 3, 4, 5, 6], on: true }); saveSettings(); drawList(); } }, "+ Adicionar horário"),
-        el("button", { class: "btn primary", type: "button", onclick: async () => { if (remindersSupported) { await requestNotificationPermission(); await drawStatus(); } applyReminders(); } }, icon("bell"), "Salvar lembretes"))),
-    el("section", { class: "card stack" }, el("h2", {}, "Voz dos lembretes e das aulas"),
-      el("label", { class: "stack small-gap" }, el("span", { class: "eyebrow" }, "Voz em inglês"), voiceSel),
-      range("rate", "Velocidade", "rate", 0.6, 1.4, 0.1),
-      range("pitch", "Tom", "pitch", 0.7, 1.4, 0.1),
-      el("label", { class: "row" }, speakOpen, "Falar a frase quando eu abrir o app pelo lembrete"),
-      el("div", { class: "row" },
-        el("button", { class: "btn", type: "button", onclick: () => say(pick(MOTIVATION)[0]) }, icon("speaker"), "Ouvir uma frase"),
-        remindersSupported ? el("button", { class: "btn dark", type: "button", onclick: async () => {
-          await requestNotificationPermission();
-          const [en, pt] = pick(MOTIVATION);
-          if (await testReminder(en, pt)) toast("Notificação de teste em 5 segundos. Saia do app para ver.");
-        } }, icon("bell"), "Testar notificação") : null)),
-    el("section", { class: "card stack" }, el("h2", {}, "Frases que você vai receber"),
-      el("ul", { class: "phrases" }, ...MOTIVATION.slice(0, 8).map(([en, pt]) => el("li", {}, el("div", { class: "row", style: "flex-wrap:nowrap" }, speakBtn(en), el("div", {}, el("b", {}, en), el("div", { class: "muted small" }, pt)))))),
-      el("p", { class: "muted small" }, `E mais ${MOTIVATION.length - 8} frases, que se revezam a cada dia.`)),
+        el("button", { class: "btn primary", type: "button", onclick: async () => {
+          if (remindersSupported) { if ((await notificationStatus()).display !== "granted") await requestNotificationPermission(); await drawSteps(); }
+          await applyReminders(); drawUpcoming();
+        } }, icon("bell"), "Salvar lembretes"))),
+    el("section", { class: "card stack" }, el("h2", {}, "Voz do lembrete"),
+      el("p", { class: "muted small" }, hasPack() ? "Toque para ouvir. A voz escolhida fala a frase em inglês quando o lembrete chegar." : "As vozes naturais vêm no app Android. Escolha a sua e ouça lá."),
+      voiceCards,
+      el("label", { class: "row" }, speakOpen, "Falar a frase de novo quando eu abrir o app pelo lembrete"),
+      remindersSupported ? el("button", { class: "btn dark", type: "button", style: "justify-self:start", onclick: async () => {
+        if ((await notificationStatus()).display !== "granted") await requestNotificationPermission();
+        const n = Math.floor(Math.random() * REMINDER_LINES.length);
+        if (await testReminder(REMINDER_LINES[n], n, reminderVoice())) toast("Lembrete de teste em 8 segundos. Bloqueie a tela para ver e ouvir.");
+      } }, icon("bell"), "Testar lembrete agora") : null),
+    el("section", { class: "card stack" }, el("h2", {}, "Frases dos lembretes"),
+      el("ul", { class: "phrases" }, ...REMINDER_LINES.map(([en, pt], n) => el("li", {}, el("div", { class: "row", style: "flex-wrap:nowrap" },
+        el("button", { class: "icon-btn", type: "button", "aria-label": "Ouvir", onclick: () => (reminderVoice() ? playClip(reminderClipUrl(reminderVoice(), n)) : say(en)) }, icon("speaker")),
+        el("div", {}, el("b", {}, en), el("div", { class: "muted small" }, pt))))))),
   );
 }
 let pendingMotivation = null;
 function renderMotivacao() {
   const v = $("#view-motivacao");
   const [en, pt] = pendingMotivation || MOTIVATION[dayNum() % MOTIVATION.length];
-  const face = el("div", { class: "motiv-face", html: avatarSVG(170) });
-  const off = onSpeakingChange((on) => face.classList.toggle("talking", on));
-  currentCleanup = off;
+  const face = talkingFace(170, "motiv-face");
+  currentCleanup = face._off;
   const nl = nextLesson();
   put(v, el("section", { class: "motiv" }, face,
     el("p", { class: "motiv-en" }, en), el("p", { class: "motiv-pt" }, pt),
     el("div", { class: "row center" },
       canSpeak() ? el("button", { class: "btn", type: "button", onclick: () => say(en) }, icon("speaker"), "Ouvir de novo") : null,
       el("a", { class: "btn primary", href: "#licao-" + nl.id }, "Bora estudar", icon("arrowR")),
-      el("a", { class: "btn", href: "#conversa" }, icon("chat"), "Conversar"))));
+      el("a", { class: "btn", href: "#chamada" }, icon("chat"), "Chamada com IA"))));
   if (pendingMotivation && S.speakOnOpen) setTimeout(() => say(en), 400);
   pendingMotivation = null;
 }
 
 // ---------- Ajustes ----------
+const PALETTES = [
+  ["vibrante", "Vibrante", "linear-gradient(135deg,#6c4cf5,#b245e8,#ff4f7b)"],
+  ["oceano", "Oceano", "linear-gradient(135deg,#1f6feb,#00b4a6)"],
+  ["por-do-sol", "Pôr do sol", "linear-gradient(135deg,#ff8a2b,#f2601f,#d6246e)"],
+  ["floresta", "Floresta", "linear-gradient(135deg,#15803d,#65a30d)"],
+  ["classico", "Clássico", "linear-gradient(135deg,#141b2d,#d6402b)"],
+];
+function appearanceCard() {
+  const themes = el("div", { class: "themes", role: "group", "aria-label": "Cores do app" }, ...PALETTES.map(([id, label, grad]) => {
+    const b = el("button", { type: "button", class: "theme-swatch", "aria-pressed": String(S.palette === id) }, el("i", { style: `background:${grad}` }), label);
+    b.addEventListener("click", () => { S.palette = id; saveSettings(); $$(".theme-swatch", themes).forEach((x) => x.setAttribute("aria-pressed", String(x === b))); });
+    return b;
+  }));
+  const mode = el("div", { class: "seg", role: "group", "aria-label": "Modo claro ou escuro" }, ...[["auto", "Automático"], ["light", "Claro"], ["dark", "Escuro"]].map(([k, l]) => {
+    const b = el("button", { type: "button", "aria-pressed": String((S.themeMode || "auto") === k) }, l);
+    b.addEventListener("click", () => { S.themeMode = k; saveSettings(); $$("button", mode).forEach((x) => x.setAttribute("aria-pressed", String(x === b))); });
+    return b;
+  }));
+  return el("section", { class: "card stack" }, el("h2", {}, "Aparência"),
+    el("p", { class: "muted small" }, "Escolha as cores do app."), themes, mode,
+    el("div", { class: "row" }, el("a", { class: "btn", href: "#professores" }, icon("user"), "Professores"), el("a", { class: "btn", href: "#vozes" }, icon("speaker"), "Vozes")));
+}
 function renderAjustes() {
   const v = $("#view-ajustes");
   const result = el("div");
@@ -1143,6 +1273,7 @@ function renderAjustes() {
         el("button", { class: "btn ghost", type: "button", onclick: () => { keyInput.value = ""; saveKey(); toast("Chave removida deste aparelho"); } }, "Remover chave")),
       result,
       el("details", {}, el("summary", {}, "Como conseguir a chave"), howTo)),
+    appearanceCard(),
     el("section", { class: "card stack" },
       el("h2", {}, "Backup do progresso"),
       el("p", { class: "muted" }, "Seu progresso fica salvo neste aparelho. Copie o backup antes de trocar de celular ou reinstalar o app."),
@@ -1163,21 +1294,365 @@ function renderAjustes() {
   );
 }
 
+// ---------- Professores (avatares) ----------
+function matchVoicesTo(a) {
+  if (a.pack) S.packVoice = a.pack;
+  if (S.aiVoiceProvider === "gemini") S.aiVoice = a.gemini;
+  if (S.aiVoiceProvider === "openai") S.aiVoice = a.openai;
+}
+function renderProfessores() {
+  const v = $("#view-professores");
+  const grid = el("div", { class: "tutor-grid" });
+  const draw = () => {
+    put(grid, ...AVATARS.map((a) => {
+      const card = el("button", { type: "button", class: "tutor-card", "aria-pressed": String(S.avatar === a.id) },
+        el("div", { class: "tutor-card-face", html: avatarSVG(a, 112) }),
+        el("b", {}, a.name), el("span", { class: "muted small" }, `${a.g === "f" ? "Professora" : "Professor"} · ${a.from}`));
+      card.addEventListener("click", () => {
+        S.avatar = a.id; matchVoicesTo(a); saveSettings(); draw();
+        const face = $(".tutor-card-face", card);
+        face.classList.add("talking");
+        say(MOTIVATION[9][0]).finally(() => face.classList.remove("talking"));
+      });
+      return card;
+    }));
+  };
+  draw();
+  // Foto própria
+  const nameIn = el("input", { type: "text", id: "photo-name", value: S.photoName || "", placeholder: "Nome do professor(a)", "aria-label": "Nome" });
+  const genderSel = el("select", { id: "photo-gender", "aria-label": "Voz" }, el("option", { value: "f", selected: S.photoGender !== "m" }, "Voz de mulher"), el("option", { value: "m", selected: S.photoGender === "m" }, "Voz de homem"));
+  const preview = el("div", { class: "photo-preview", html: S.photo ? photoAvatarHTML(S.photo, 96, S.photoName) : "" });
+  const file = el("input", { type: "file", accept: "image/*", id: "photo-file", "aria-label": "Escolher foto" });
+  file.addEventListener("change", () => {
+    const f = file.files && file.files[0];
+    if (!f) return;
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      const side = Math.min(img.width, img.height);
+      c.width = c.height = 320;
+      c.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 3, side, side, 0, 0, 320, 320);
+      S.photo = c.toDataURL("image/jpeg", 0.85);
+      URL.revokeObjectURL(img.src);
+      preview.innerHTML = photoAvatarHTML(S.photo, 96, nameIn.value);
+      toast("Foto carregada. Toque em Usar esta foto.");
+    };
+    img.src = URL.createObjectURL(f);
+  });
+  const usePhoto = el("button", { class: "btn primary", type: "button" }, "Usar esta foto");
+  usePhoto.addEventListener("click", () => {
+    if (!S.photo) { toast("Escolha uma foto primeiro."); return; }
+    S.photoName = nameIn.value.trim() || "Teacher";
+    S.photoGender = genderSel.value;
+    S.avatar = "foto";
+    const base = AVATARS.find((a) => a.g === S.photoGender);
+    matchVoicesTo(base);
+    saveSettings(); draw();
+    toast(`${S.photoName} agora é seu professor(a)!`);
+  });
+  put(v,
+    el("header", { class: "hello" }, el("span", { class: "eyebrow" }, "Quem vai te ensinar"), el("h1", {}, "Escolha seu professor(a)"),
+      el("p", { class: "muted" }, "Cada professor tem uma voz natural combinando. Ele aparece nas vídeo-aulas, na conversa e na chamada de vídeo. Toque para ouvir.")),
+    grid,
+    el("section", { class: "card stack" },
+      el("h2", {}, "Usar uma foto"),
+      el("p", { class: "muted small" }, "Quer um rosto fotográfico? Escolha uma foto (pode ser uma imagem criada por IA) e ela vira seu professor. A foto fica salva só neste celular."),
+      el("div", { class: "photo-row" }, preview, el("div", { class: "stack" }, file, nameIn, genderSel, usePhoto))),
+  );
+}
+
+// ---------- Vozes ----------
+const GENDER = { f: "mulher", m: "homem", n: "neutra" };
+function renderVozes() {
+  const v = $("#view-vozes");
+  const status = el("div");
+  // 1. Vozes naturais embutidas
+  const packList = hasPack() ? packVoices() : PACK_VOICES;
+  const packGrid = el("div", { class: "voice-grid" }, ...packList.map((vc) => {
+    const b = el("button", { type: "button", class: "voice-card", "aria-pressed": String(S.packVoice === vc.id) },
+      el("span", { class: "voice-emoji" }, vc.gender === "f" ? "👩" : "👨"), el("b", {}, vc.name), el("span", { class: "muted small" }, GENDER[vc.gender]));
+    b.addEventListener("click", () => {
+      S.packVoice = vc.id; saveSettings();
+      $$(".voice-card", packGrid).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      say(pick(MOTIVATION)[0]);
+    });
+    return b;
+  }));
+  // 2. Voz com IA
+  const prov = S.aiVoiceProvider;
+  const provSeg = el("div", { class: "seg", role: "group", "aria-label": "Voz com IA" },
+    ...[["off", "Desligada"], ["gemini", "Gemini"], ["openai", "OpenAI"]].map(([k, l]) =>
+      el("button", { type: "button", "aria-pressed": String(prov === k), onclick: () => {
+        S.aiVoiceProvider = k;
+        if (k !== "off" && !AI_VOICES[k].some((x) => x.id === S.aiVoice)) matchVoicesTo(tutor().photo ? AVATARS.find((a) => a.g === tutor().g) : tutor());
+        saveSettings(); renderVozes();
+      } }, l)));
+  let aiBox = null;
+  if (prov !== "off") {
+    const list = AI_VOICES[prov];
+    const grid = el("div", { class: "voice-grid" }, ...list.map((vc) => {
+      const b = el("button", { type: "button", class: "voice-card", "aria-pressed": String(S.aiVoice === vc.id) },
+        el("span", { class: "voice-emoji" }, vc.g === "f" ? "👩" : vc.g === "m" ? "👨" : "🧑"), el("b", {}, vc.label), el("span", { class: "muted small" }, `${GENDER[vc.g]} · ${vc.vibe}`));
+      b.addEventListener("click", async () => {
+        S.aiVoice = vc.id; saveSettings();
+        $$(".voice-card", grid).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+        await testAIVoice();
+      });
+      return b;
+    }));
+    const keyField = prov === "openai"
+      ? el("label", { class: "stack small-gap" }, el("span", { class: "eyebrow" }, "Chave da OpenAI"),
+        (() => { const i = el("input", { type: "password", id: "openai-key", value: S.openaiKey, placeholder: "sk-...", autocomplete: "off", spellcheck: "false", "aria-label": "Chave da OpenAI" });
+          i.addEventListener("change", () => { S.openaiKey = i.value.trim(); saveSettings(); }); return i; })())
+      : (aiSpeechReady("gemini") ? el("p", { class: "note ok small" }, "Usa a mesma chave do Gemini que você colocou em Ajustes.")
+        : el("p", { class: "note warn small" }, "Cole sua chave do Gemini em Ajustes (é grátis) para usar estas vozes."));
+    const modelIn = el("input", { type: "text", id: "tts-model", spellcheck: "false", value: prov === "gemini" ? S.geminiTtsModel || GEMINI_TTS_DEFAULT : S.openaiTtsModel || OPENAI_TTS_DEFAULT, "aria-label": "Modelo de voz" });
+    modelIn.addEventListener("change", () => { if (prov === "gemini") S.geminiTtsModel = modelIn.value.trim(); else S.openaiTtsModel = modelIn.value.trim(); saveSettings(); });
+    aiBox = el("div", { class: "stack" }, keyField, grid,
+      el("details", {}, el("summary", {}, "Modelo de voz (avançado)"), el("div", { class: "stack", style: "margin-top:8px" }, modelIn,
+        el("p", { class: "muted small" }, prov === "gemini" ? "Se o Google trocar o nome do modelo de voz, atualize aqui." : "Precisa de créditos na sua conta da OpenAI (platform.openai.com)."))),
+      status);
+  }
+  async function testAIVoice() {
+    put(status, el("span", { class: "thinking" }, "Gerando a voz..."));
+    try {
+      const blob = await aiSpeech("Hey there! This is how I sound. Nice to meet you!", { provider: S.aiVoiceProvider, voice: S.aiVoice });
+      put(status, el("p", { class: "note ok small" }, "Voz funcionando! Ela será usada nas conversas, na chamada e nas aulas sob medida."));
+      const url = URL.createObjectURL(blob);
+      await playClip(url);
+      URL.revokeObjectURL(url);
+    } catch (e) { put(status, el("p", { class: "note warn small" }, aiErrorText(e))); }
+  }
+  // 3. Ritmo e voz do celular
+  const range = (id, label, key, min, max, step, fmt) => {
+    const out = el("span", { class: "mono" }, fmt(S[key]));
+    const r = el("input", { type: "range", id, min, max, step, value: S[key], "aria-label": label });
+    r.addEventListener("input", () => { S[key] = Number(r.value); out.textContent = fmt(S[key]); });
+    r.addEventListener("change", () => { saveSettings(); say(MOTIVATION[1][0]); });
+    return el("label", { class: "stack small-gap" }, el("span", { class: "row spread" }, el("span", {}, label), out), r);
+  };
+  const devSel = el("select", { id: "device-voice", "aria-label": "Voz do celular" }, el("option", { value: "" }, "Padrão do celular"));
+  listEnglishVoices().then((voices) => {
+    voices.forEach((vc) => devSel.append(el("option", { value: String(vc.index), selected: S.deviceVoice && S.deviceVoice.index === vc.index }, `${vc.name} (${vc.lang})`)));
+    devSel._voices = voices;
+  });
+  devSel.addEventListener("change", () => {
+    const vc = (devSel._voices || []).find((x) => String(x.index) === devSel.value);
+    S.deviceVoice = vc ? { index: vc.index, voiceURI: vc.voiceURI, name: vc.name } : null;
+    saveSettings();
+  });
+  put(v,
+    el("header", { class: "hello" }, el("span", { class: "eyebrow" }, "Áudio"), el("h1", {}, "Vozes"),
+      el("p", { class: "muted" }, "Escolha vozes de homem ou de mulher, que falam como uma pessoa de verdade e no ritmo normal de conversa.")),
+    el("section", { class: "card stack" }, el("h2", {}, "Voz natural das frases do app"),
+      el("p", { class: "muted small" }, hasPack() ? "Grátis e funciona sem internet: exemplos, gírias, expressões e lembretes. Toque para ouvir." : "Grátis e funciona sem internet no app Android. Aqui (versão web) é usada a voz do navegador."),
+      packGrid),
+    el("section", { class: "card stack" }, el("h2", {}, "Voz natural com IA"),
+      el("p", { class: "muted small" }, "Para o que muda a cada vez: respostas da conversa, chamada de vídeo e aulas sob medida. A Gemini tem faixa gratuita (com limite por dia); a OpenAI é paga por uso. Os áudios ficam guardados no celular para não gastar de novo."),
+      provSeg, aiBox),
+    el("section", { class: "card stack" }, el("h2", {}, "Ritmo"),
+      range("rate", "Velocidade da fala", "rate", 0.8, 1.5, 0.05, (x) => `${x.toFixed(2)}x`),
+      range("pitch", "Tom (voz do celular)", "pitch", 0.8, 1.3, 0.05, (x) => x.toFixed(2)),
+      el("label", { class: "stack small-gap" }, el("span", { class: "eyebrow" }, "Voz do celular (reserva)"), devSel),
+      el("button", { class: "btn ghost small", type: "button", style: "justify-self:start", onclick: async () => { await clearVoiceCache(); toast("Áudios guardados apagados."); } }, "Apagar áudios guardados da IA")),
+  );
+}
+
+// ---------- Chamada de vídeo com IA ----------
+const call = { scen: SCENARIOS.find((s) => s.id === "free"), level: "mid", captions: true, translate: false, camera: false, active: null };
+function callSystem() {
+  return `You are on a live video call helping a Brazilian learner practice SPOKEN American English. You are ${tutor().name}, ${tutor().g === "f" ? "a woman" : "a man"} from the U.S.
+Role-play: ${call.scen.role}.
+Learner level: ${CONV_LEVELS[call.level].txt}.
+Rules:
+- This is spoken conversation: reply with 1 or 2 short, natural sentences, the way people really talk, and usually end with a question.
+- Never use emojis, lists or symbols, because your reply will be read aloud.
+- The learner speaks through voice recognition, so ignore punctuation and small recognition errors.
+- Before your reply, give a very short correction in Brazilian Portuguese of the learner's LAST sentence (one line), or "Perfeito!" if it was fine.
+Output format, exactly:
+FEEDBACK: <one line in Portuguese>
+===
+<your spoken reply in English>`;
+}
+function renderChamada() {
+  const v = $("#view-chamada");
+  if (call.active) return; // a chamada fica em tela cheia
+  if (!aiReady()) {
+    put(v, el("header", { class: "hello" }, el("span", { class: "eyebrow" }, "Conversação ao vivo"), el("h1", {}, "Chamada de vídeo com IA")), aiGate());
+    return;
+  }
+  const scenSel = el("select", { id: "call-scen", "aria-label": "Situação" }, ...SCENARIO_GROUPS.map((g, gi) =>
+    el("optgroup", { label: g }, ...SCENARIOS.filter((s) => s.group === gi).map((s) => el("option", { value: s.id, selected: s.id === call.scen.id }, s.title)))));
+  scenSel.addEventListener("change", () => { call.scen = SCENARIOS.find((s) => s.id === scenSel.value); });
+  const levelSel = el("select", { id: "call-level", "aria-label": "Seu nível" }, ...Object.entries(CONV_LEVELS).map(([k, o]) => el("option", { value: k, selected: k === call.level }, o.label)));
+  levelSel.addEventListener("change", () => { call.level = levelSel.value; });
+  const toggle = (key, label) => {
+    const b = el("button", { class: "chip", type: "button", "aria-pressed": String(call[key]) }, label);
+    b.addEventListener("click", () => { call[key] = !call[key]; b.setAttribute("aria-pressed", String(call[key])); });
+    return b;
+  };
+  const t = tutor();
+  put(v,
+    el("header", { class: "hello" }, el("span", { class: "eyebrow" }, "Conversação ao vivo"), el("h1", {}, "Chamada de vídeo com IA"),
+      el("p", { class: "muted" }, `Fale em voz alta com ${tutorRef(t)}, como numa chamada de verdade. O app escuta você, ${t.g === "f" ? "ela" : "ele"} responde falando, e as correções aparecem na tela.`)),
+    el("section", { class: "card call-setup" },
+      el("div", { class: "call-setup-face", html: faceHTML(132) }),
+      el("div", { class: "stack" },
+        el("div", { class: "row spread" }, el("h2", {}, tutorTitle(t)), el("a", { class: "chip", href: "#professores" }, "Trocar")),
+        el("label", { class: "stack small-gap" }, el("span", { class: "eyebrow" }, "Situação"), scenSel),
+        el("label", { class: "stack small-gap" }, el("span", { class: "eyebrow" }, "Seu nível"), levelSel),
+        el("div", { class: "row" }, toggle("captions", "Legenda"), toggle("translate", "Tradução"), toggle("camera", "Minha câmera")),
+        usingAIVoice() ? null : el("p", { class: "note small" }, "Dica: ative a ", el("a", { href: "#vozes" }, "voz natural com IA"), " para a voz da chamada ficar mais humana."),
+        el("button", { class: "btn primary big", type: "button", onclick: startCall }, "📞 Iniciar chamada"))),
+    call.last ? callSummary(call.last) : null,
+  );
+}
+function callSummary(r) {
+  const min = Math.max(1, Math.round(r.seconds / 60));
+  return el("section", { class: "card stack" },
+    el("h2", {}, "Resumo da última chamada"),
+    el("p", {}, `${min} min · você falou ${r.turns} ${r.turns === 1 ? "vez" : "vezes"} · +${r.xp} XP`),
+    r.fixes.length ? el("div", { class: "stack" }, el("strong", {}, "Correções para revisar"), el("ul", { class: "fix-list" }, ...r.fixes.map((f) => el("li", {}, el("div", { class: "muted small" }, `Você: "${f.said}"`), el("div", {}, f.fb))))) : el("p", { class: "note ok" }, "Nenhuma correção. Mandou muito bem!"));
+}
+async function startCall() {
+  const t = tutor();
+  const st = { turns: [{ role: "assistant", content: call.scen.opener }], said: 0, fixes: [], started: Date.now(), ended: false, rec: null, auto: true, stream: null, ctl: null };
+  call.active = st;
+  const face = talkingFace(Math.min(240, Math.round(window.innerWidth * 0.55)), "call-face");
+  const timer = el("span", { class: "call-timer mono" }, "00:00");
+  const stateEl = el("span", { class: "call-state" }, "Conectando...");
+  const aiCap = el("p", { class: "call-cap-ai", hidden: !call.captions });
+  const ptCap = el("p", { class: "call-cap-pt", hidden: true });
+  const meCap = el("p", { class: "call-cap-me" });
+  const fbCap = el("p", { class: "call-fb", hidden: true });
+  const video = el("video", { class: "call-self", autoplay: true, muted: true, playsinline: true, hidden: true });
+  const typed = el("input", { type: "text", class: "call-type", placeholder: "Sem microfone? Escreva aqui e aperte Enter", hidden: true, "aria-label": "Sua fala" });
+  const micBtn = el("button", { class: "call-btn", type: "button", "aria-label": "Falar" }, icon("mic"));
+  const capBtn = el("button", { class: "call-btn", type: "button", "aria-label": "Legenda", "aria-pressed": String(call.captions) }, "CC");
+  const camBtn = el("button", { class: "call-btn", type: "button", "aria-label": "Câmera", "aria-pressed": String(call.camera) }, icon("video"));
+  const endBtn = el("button", { class: "call-btn end", type: "button", "aria-label": "Encerrar chamada" }, "✕");
+  const overlay = el("div", { class: "call", role: "dialog", "aria-label": `Chamada com ${t.name}` },
+    el("div", { class: "call-top" }, el("div", {}, el("b", {}, t.name), el("div", { class: "small" }, call.scen.title)), timer),
+    el("div", { class: "call-stage" }, face, stateEl),
+    el("div", { class: "call-caps" }, aiCap, ptCap, meCap, fbCap, typed),
+    video,
+    el("div", { class: "call-controls" }, micBtn, capBtn, camBtn, endBtn));
+  document.body.append(overlay);
+  document.body.classList.add("in-call");
+  const tick = setInterval(() => { const s = Math.floor((Date.now() - st.started) / 1000); timer.textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 1000);
+  const setState = (txt, cls) => { stateEl.textContent = txt; stateEl.className = "call-state " + (cls || ""); };
+  const showAI = async (text) => {
+    aiCap.textContent = text; ptCap.hidden = true;
+    if (call.translate) {
+      ptCap.hidden = false; ptCap.textContent = "...";
+      aiText({ system: "Traduza do inglês para o português do Brasil, de forma natural. Responda só com a tradução.", messages: [{ role: "user", content: text }], effort: "low", maxTokens: 600 })
+        .then((tr) => { if (aiCap.textContent === text) ptCap.textContent = tr.trim(); }).catch(() => { ptCap.hidden = true; });
+    }
+  };
+  async function aiSay(text) {
+    await showAI(text);
+    setState("Falando...", "speaking");
+    await speak(text);
+    if (!st.ended && st.auto) listenTurn();
+    else if (!st.ended) setState("Toque no microfone para responder");
+  }
+  async function listenTurn() {
+    if (st.ended || st.rec) return;
+    if (!(await canListen())) { typed.hidden = false; setState("Escreva sua resposta"); return; }
+    setState("Ouvindo... fale agora", "listening");
+    micBtn.classList.add("on");
+    meCap.textContent = "";
+    st.rec = await listen({
+      onPartial: (p) => { meCap.textContent = p; },
+      onEnd: (said, err) => {
+        st.rec = null; micBtn.classList.remove("on");
+        if (st.ended) return;
+        if (err === "not_granted") { typed.hidden = false; setState("Permita o microfone ou escreva sua resposta"); return; }
+        if (!said.trim()) { st.auto = false; setState("Não ouvi nada. Toque no microfone para falar"); return; }
+        st.auto = true;
+        reply(said.trim());
+      },
+    });
+  }
+  async function reply(said) {
+    meCap.textContent = said;
+    st.turns.push({ role: "user", content: said });
+    st.said++;
+    setState("Pensando...", "thinking");
+    const ctl = new AbortController(); st.ctl = ctl;
+    try {
+      const full = await aiText({ system: callSystem(), messages: [{ role: "user", content: "(The call starts.)" }, ...st.turns.slice(-20)], effort: "low", maxTokens: 800, signal: ctl.signal });
+      if (st.ended) return;
+      const p = parseReply(full);
+      if (p.fb && p.fb !== "-") {
+        fbCap.hidden = false; fbCap.textContent = p.fb;
+        fbCap.classList.toggle("perfect", /^perfeito!?$/i.test(p.fb));
+        if (!/^perfeito!?$/i.test(p.fb)) st.fixes.push({ said, fb: p.fb });
+      }
+      const text = p.reply || "Sorry, could you say that again?";
+      st.turns.push({ role: "assistant", content: text });
+      aiSay(text);
+    } catch (e) {
+      if (st.ended || e.code === "cancelled") return;
+      st.turns.pop();
+      setState(aiErrorText(e));
+      st.auto = false;
+    }
+  }
+  micBtn.addEventListener("click", async () => {
+    if (st.rec) { st.rec.stop(); return; }
+    await stopSpeaking();
+    st.auto = true;
+    listenTurn();
+  });
+  typed.addEventListener("keydown", (e) => { if (e.key === "Enter" && typed.value.trim()) { const t2 = typed.value.trim(); typed.value = ""; reply(t2); } });
+  capBtn.addEventListener("click", () => { call.captions = !call.captions; capBtn.setAttribute("aria-pressed", String(call.captions)); aiCap.hidden = !call.captions; });
+  const startCam = async () => {
+    st.stream = await openCamera();
+    if (st.stream) { video.srcObject = st.stream; video.hidden = false; } else { call.camera = false; camBtn.setAttribute("aria-pressed", "false"); toast("Não foi possível abrir a câmera."); }
+  };
+  const stopCam = () => { if (st.stream) st.stream.getTracks().forEach((tr) => tr.stop()); st.stream = null; video.hidden = true; };
+  camBtn.addEventListener("click", () => { call.camera = !call.camera; camBtn.setAttribute("aria-pressed", String(call.camera)); if (call.camera) startCam(); else stopCam(); });
+  endBtn.addEventListener("click", endCall);
+  function endCall() {
+    st.ended = true;
+    if (st.rec) st.rec.stop();
+    if (st.ctl) st.ctl.abort();
+    stopSpeaking(); stopCam(); clearInterval(tick); face._off();
+    overlay.remove();
+    document.body.classList.remove("in-call");
+    const seconds = Math.round((Date.now() - st.started) / 1000);
+    const xp = st.said ? 10 + st.said * 3 : 0;
+    if (xp) addXP(xp);
+    P.stats.calls = (P.stats.calls || 0) + 1; save();
+    call.last = { seconds, turns: st.said, fixes: st.fixes, xp };
+    call.active = null;
+    currentCleanup = null;
+    renderChamada();
+  }
+  currentCleanup = () => { if (call.active) endCall(); };
+  if (call.camera) startCam();
+  setTimeout(() => aiSay(call.scen.opener), 500);
+}
+
 // ---------- Mais ----------
 function renderMais() {
-  put($("#view-mais"), 
+  put($("#view-mais"),
     el("header", { class: "hello" }, el("h1", {}, "Mais")),
     el("div", { class: "actions" },
-      action("#aulas", "play", "Vídeo-aulas", `Aulas narradas pela ${TUTOR_NAME} e aulas sob medida com IA`),
+      action("#treino", "target", "Treino", "Flashcards, ouvido, fala, redação e quiz"),
+      action("#aulas", "play", "Vídeo-aulas", "Aulas narradas e aulas sob medida com IA"),
+      action("#professores", "user", "Professores", "Escolha quem vai te ensinar (ou use uma foto)"),
+      action("#vozes", "speaker", "Vozes", "Vozes naturais de homem e de mulher"),
       action("#expressoes", "book", "Gírias e expressões", `${SLANG.length + PHRASAL.length + IDIOMS.length} expressões com áudio`),
-      action("#lembretes", "bell", "Lembretes", "Horários, voz e frases motivacionais"),
-      action("#ajustes", "gear", "Ajustes", "IA, backup do progresso e sobre o app")));
+      action("#lembretes", "bell", "Lembretes", "Horários e voz em inglês na notificação"),
+      action("#ajustes", "gear", "Ajustes", "IA, cores do app e backup do progresso")));
 }
 
 // ---------- Inicialização ----------
 buildNav();
 $("#stop-voice").addEventListener("click", () => stopSpeaking());
-onSpeakingChange((on) => ($("#speaking-bar").hidden = !on));
+onSpeakingChange((on) => ($("#speaking-bar").hidden = !on || document.body.classList.contains("in-call")));
 updateChrome();
 onReminderOpened((extra) => {
   pendingMotivation = extra && extra.en ? [extra.en, extra.pt || ""] : null;
@@ -1185,10 +1660,17 @@ onReminderOpened((extra) => {
 });
 if (isNative) {
   CapApp.addListener("backButton", () => {
+    if (call.active) { $(".call .end")?.click(); return; }
     const h = location.hash.slice(1) || "inicio";
     if (h === "inicio") CapApp.exitApp(); else history.back();
   });
-  applyReminders(true); // renova a janela de 3 semanas de lembretes
 }
 route();
 lastView = location.hash.slice(1) || "inicio";
+// Vozes naturais embutidas: carrega o índice e renova os lembretes (com a voz escolhida).
+loadPack().then(() => {
+  applySettings();
+  if (isNative) applyReminders(true);
+  const h = location.hash.slice(1) || "inicio";
+  if (["vozes", "lembretes"].includes(h)) route();
+});
