@@ -27,7 +27,7 @@ async function render(page, markup, size, file, { bg = "transparent", scale = 1,
   await render(p, svg, 192, path.join(web, "icon-192.png"));
   await render(p, svg, 512, path.join(web, "icon-512.png"));
   const square = svg.replace(/rx="112"/, 'rx="0"');
-  await render(p, markOnly, 512, path.join(web, "icon-maskable-512.png"), { bg: "#D6402B", scale: 0.8 });
+  await render(p, markOnly, 512, path.join(web, "icon-maskable-512.png"), { bg: "linear-gradient(135deg,#6C4CF5,#B245E8,#FF4F7B)", scale: 0.8 });
 
   const res = path.join(root, "android/app/src/main/res");
   if (fs.existsSync(res)) {
